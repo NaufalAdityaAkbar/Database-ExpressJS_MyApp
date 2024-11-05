@@ -75,19 +75,25 @@ const getChats = (req, res) => {
             END AS contact_phone,
             u.name AS contact_name, 
             u.photo,
-            MAX(c.message) AS message,  -- Use MAX to get the latest message
+            c.message, -- Ambil pesan terakhir langsung
             SUM(CASE 
                     WHEN c.sender_phone != ? AND c.unread_count > 0 THEN c.unread_count 
                     ELSE 0 
                 END) AS total_unread,
-            MAX(c.created_at) AS created_at
+            c.created_at AS created_at -- Ambil created_at dari chat terbaru
         FROM chats c
         JOIN users u ON u.phone_number = CASE 
                                             WHEN c.sender_phone = ? THEN c.receiver_phone 
                                             ELSE c.sender_phone 
                                          END
         WHERE (c.sender_phone = ? OR c.receiver_phone = ?)
-        GROUP BY contact_phone, contact_name, u.photo
+        AND c.created_at = (
+            SELECT MAX(created_at) 
+            FROM chats 
+            WHERE (sender_phone = c.sender_phone AND receiver_phone = c.receiver_phone) 
+               OR (sender_phone = c.receiver_phone AND receiver_phone = c.sender_phone)
+        )
+        GROUP BY contact_phone, contact_name, u.photo, c.message, c.created_at
         ORDER BY created_at DESC;
     `;
 
@@ -103,6 +109,30 @@ const getChats = (req, res) => {
 };
 
 
+//Delte pesan antar user
+const deleteChat = (req, res) => {
+    const { loggedInPhoneNumber, contactPhoneNumber } = req.params;
+
+    const sql = `
+        DELETE FROM chats 
+        WHERE (sender_phone = ? AND receiver_phone = ?) 
+        OR (sender_phone = ? AND receiver_phone = ?);
+    `;
+
+    db.query(sql, [loggedInPhoneNumber, contactPhoneNumber, contactPhoneNumber, loggedInPhoneNumber], (error, results) => {
+        if (error) {
+            console.error('Error deleting chat:', error);
+            return res.status(500).json({ message: 'Error deleting chat', error: error.message });
+        }
+
+        // Mengecek apakah ada baris yang dihapus
+        if (results.affectedRows === 0) {
+            return res.status(404).json({ message: 'No chat found to delete' });
+        }
+
+        res.status(200).json({ message: 'Chat deleted successfully' });
+    });
+};
 
 
 
@@ -126,4 +156,4 @@ const getTotalUnreadCount = (req, res) => {
 
 
 
-module.exports = { getMessages, sendMessage, getChats, markAsRead, getTotalUnreadCount };
+module.exports = { getMessages, sendMessage, getChats, markAsRead, getTotalUnreadCount, deleteChat };
